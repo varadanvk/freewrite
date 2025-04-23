@@ -91,6 +91,7 @@ struct ContentView: View {
     @State private var entryName = "" // For the custom entry name
     @State private var isEditingEntryName = false
     @State private var editingEntryId: UUID? = nil
+    @FocusState private var focusedEntryId: UUID? // <-- Add FocusState
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     let entryHeight: CGFloat = 40
     
@@ -112,6 +113,7 @@ struct ContentView: View {
     private let fileManager = FileManager.default
     private let saveTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     
+    // Add state for the user-selected directory
     // Add cached documents directory
     private let documentsDirectory: URL = {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Freewrite")
@@ -920,23 +922,15 @@ struct ContentView: View {
                                                     .textFieldStyle(PlainTextFieldStyle())
                                                     .font(.system(size: 13, weight: .medium)) // Match text style
                                                     .padding(.vertical, -2) // Adjust padding
-                                                    // Attempt to focus - might not be reliable
+                                                    .focused($focusedEntryId, equals: entry.id) // <-- Bind focus state
+                                                    // Remove the unreliable .onAppear focus attempt
+                                                    /*
                                                     .onAppear {
                                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                                            // Find the specific text field associated with this view structure
-                                                            // This remains a challenge in pure SwiftUI.
-                                                            // Let's try finding the key window's first responder if it's a text field.
-                                                            if let currentFirstResponder = NSApp.keyWindow?.firstResponder as? NSTextView {
-                                                                // If a text view already has focus, maybe don't steal it,
-                                                                // otherwise, try to set focus. This logic is imperfect.
-                                                            } else {
-                                                                  // Attempt to make the newly appeared text field the first responder.
-                                                                  // This often requires more specific view targeting or Introspection.
-                                                                  // For now, we rely on the user potentially needing to click.
-                                                                   NSApp.keyWindow?.makeFirstResponder(nil) // Clear focus first maybe?
-                                                            }
+                                                            // ... old focus attempt logic removed ...
                                                         }
                                                     }
+                                                    */
 
                                                 } else {
                                                     Text(entry.customName.isEmpty ? entry.previewText : entry.customName)
@@ -954,7 +948,7 @@ struct ContentView: View {
                                                         Button(action: {
                                                             entryName = entry.customName // Pre-fill with existing name
                                                             editingEntryId = entry.id     // Set which entry to rename inline
-                                                            // showingNamePrompt = true // No longer needed
+                                                            focusedEntryId = entry.id     // <-- Set focus to this entry's TextField
                                                         }) {
                                                             Image(systemName: "pencil") // Changed icon
                                                                 .font(.system(size: 11))

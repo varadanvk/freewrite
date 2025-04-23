@@ -16,8 +16,9 @@ struct HumanEntry: Identifiable {
     let date: String
     let filename: String
     var previewText: String
+    var customName: String
     
-    static func createNew() -> HumanEntry {
+    static func createNew(customName: String = "") -> HumanEntry {
         let id = UUID()
         let now = Date()
         let dateFormatter = DateFormatter()
@@ -32,7 +33,8 @@ struct HumanEntry: Identifiable {
             id: id,
             date: displayDate,
             filename: "[\(id)]-[\(dateString)].md",
-            previewText: ""
+            previewText: "",
+            customName: customName
         )
     }
 }
@@ -54,6 +56,7 @@ struct ContentView: View {
     @State private var timeRemaining: Int = 900  // Changed to 900 seconds (15 minutes)
     @State private var timerIsRunning = false
     @State private var isHoveringTimer = false
+    @State private var showingTimerOptions = false
     @State private var isHoveringFullscreen = false
     @State private var hoveredFont: String? = nil
     @State private var isHoveringSize = false
@@ -84,6 +87,10 @@ struct ContentView: View {
     @State private var isHoveringHistoryArrow = false
     @State private var colorScheme: ColorScheme = .light // Add state for color scheme
     @State private var isHoveringThemeToggle = false // Add state for theme toggle hover
+    @State private var showingNamePrompt = false
+    @State private var entryName = "" // For the custom entry name
+    @State private var isEditingEntryName = false
+    @State private var editingEntryId: UUID? = nil
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     let entryHeight: CGFloat = 40
     
@@ -243,12 +250,22 @@ struct ContentView: View {
                     dateFormatter.dateFormat = "MMM d"
                     let displayDate = dateFormatter.string(from: fileDate)
                     
+                    // Check for custom name metadata at start of file
+                    var customName = ""
+                    if content.hasPrefix("<!--NAME:") {
+                        if let endOfMetadata = content.range(of: "-->") {
+                            let metadataRange = content.index(content.startIndex, offsetBy: 9)..<endOfMetadata.lowerBound
+                            customName = String(content[metadataRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                    
                     return (
                         entry: HumanEntry(
                             id: uuid,
                             date: displayDate,
                             filename: filename,
-                            previewText: truncated
+                            previewText: truncated,
+                            customName: customName
                         ),
                         date: fileDate,
                         content: content  // Store the full content to check for welcome message
@@ -582,8 +599,59 @@ struct ContentView: View {
                                 isHoveringBottomNav = hovering
                                 if hovering {
                                     NSCursor.pointingHand.push()
+                                    // Add a short delay before showing the timer options
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                        if isHoveringTimer {
+                                            showingTimerOptions = true
+                                        }
+                                    }
                                 } else {
                                     NSCursor.pop()
+                                    // Use a small delay to prevent the options from disappearing
+                                    // when moving from the button to the options
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        if !isHoveringTimer {
+                                            showingTimerOptions = false
+                                        }
+                                    }
+                                }
+                            }
+                            .popover(isPresented: $showingTimerOptions, attachmentAnchor: .point(UnitPoint(x: 0.5, y: 0)), arrowEdge: .top) {
+                                HStack(spacing: 12) {
+                                    ForEach([5, 15, 25, 30, 45], id: \.self) { minutes in
+                                        Button(action: {
+                                            timeRemaining = minutes * 60
+                                            showingTimerOptions = false
+                                        }) {
+                                            Text("\(minutes)")
+                                                .font(.system(size: 13, weight: .medium))
+                                                .frame(width: 28, height: 28)
+                                                .background(
+                                                    Circle()
+                                                        .fill(timeRemaining == minutes * 60 ? 
+                                                             (colorScheme == .light ? Color.black.opacity(0.1) : Color.white.opacity(0.2)) : 
+                                                             Color.clear)
+                                                )
+                                                .contentShape(Circle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .foregroundColor(popoverTextColor)
+                                        .onHover { hovering in
+                                            if hovering {
+                                                NSCursor.pointingHand.push()
+                                            } else {
+                                                NSCursor.pop()
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(popoverBackgroundColor)
+                                .cornerRadius(8)
+                                .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
+                                .onHover { hovering in
+                                    isHoveringTimer = hovering
                                 }
                             }
                             .onAppear {
@@ -844,16 +912,64 @@ struct ContentView: View {
                                     HStack(alignment: .top) {
                                         VStack(alignment: .leading, spacing: 4) {
                                             HStack {
-                                                Text(entry.previewText)
-                                                    .font(.system(size: 13))
-                                                    .lineLimit(1)
-                                                    .foregroundColor(.primary)
+                                                // Conditionally display Text or TextField for inline editing
+                                                if editingEntryId == entry.id {
+                                                    TextField("Entry name", text: $entryName, onCommit: {
+                                                        finalizeNewEntry(withName: entryName) // Finalize on Enter
+                                                    })
+                                                    .textFieldStyle(PlainTextFieldStyle())
+                                                    .font(.system(size: 13, weight: .medium)) // Match text style
+                                                    .padding(.vertical, -2) // Adjust padding
+                                                    // Attempt to focus - might not be reliable
+                                                    .onAppear {
+                                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                                            // Find the specific text field associated with this view structure
+                                                            // This remains a challenge in pure SwiftUI.
+                                                            // Let's try finding the key window's first responder if it's a text field.
+                                                            if let currentFirstResponder = NSApp.keyWindow?.firstResponder as? NSTextView {
+                                                                // If a text view already has focus, maybe don't steal it,
+                                                                // otherwise, try to set focus. This logic is imperfect.
+                                                            } else {
+                                                                  // Attempt to make the newly appeared text field the first responder.
+                                                                  // This often requires more specific view targeting or Introspection.
+                                                                  // For now, we rely on the user potentially needing to click.
+                                                                   NSApp.keyWindow?.makeFirstResponder(nil) // Clear focus first maybe?
+                                                            }
+                                                        }
+                                                    }
+
+                                                } else {
+                                                    Text(entry.customName.isEmpty ? entry.previewText : entry.customName)
+                                                        .font(.system(size: 13, weight: entry.customName.isEmpty ? .regular : .medium))
+                                                        .lineLimit(1)
+                                                        .foregroundColor(.primary)
+                                                }
                                                 
                                                 Spacer()
                                                 
                                                 // Export/Trash icons that appear on hover
                                                 if hoveredEntryId == entry.id {
                                                     HStack(spacing: 8) {
+                                                        // Rename button (changed icon and action)
+                                                        Button(action: {
+                                                            entryName = entry.customName // Pre-fill with existing name
+                                                            editingEntryId = entry.id     // Set which entry to rename inline
+                                                            // showingNamePrompt = true // No longer needed
+                                                        }) {
+                                                            Image(systemName: "pencil") // Changed icon
+                                                                .font(.system(size: 11))
+                                                                .foregroundColor(colorScheme == .light ? .gray : .gray.opacity(0.8))
+                                                        }
+                                                        .buttonStyle(.plain)
+                                                        .help("Name entry")
+                                                        .onHover { hovering in
+                                                            if hovering {
+                                                                NSCursor.pointingHand.push()
+                                                            } else {
+                                                                NSCursor.pop()
+                                                            }
+                                                        }
+                                                        
                                                         // Export PDF button
                                                         Button(action: {
                                                             exportEntryAsPDF(entry: entry)
@@ -1006,7 +1122,30 @@ struct ContentView: View {
         let fileURL = documentsDirectory.appendingPathComponent(entry.filename)
         
         do {
-            try text.write(to: fileURL, atomically: true, encoding: .utf8)
+            // Add name metadata to content if present
+            var contentToSave = text
+            
+            // If entry has a custom name, add it as metadata at the start
+            if !entry.customName.isEmpty {
+                // Remove existing name metadata if present
+                if contentToSave.hasPrefix("<!--NAME:") {
+                    if let endOfMetadata = contentToSave.range(of: "-->") {
+                        contentToSave.removeSubrange(contentToSave.startIndex...endOfMetadata.upperBound)
+                    }
+                }
+                
+                // Add new metadata
+                contentToSave = "<!--NAME:\(entry.customName)-->\n" + contentToSave.trimmingCharacters(in: .whitespacesAndNewlines) // Ensure no leading/trailing spaces in content before metadata
+            } else {
+                 // If no custom name, ensure any existing metadata is removed
+                 if contentToSave.hasPrefix("<!--NAME:") {
+                    if let endOfMetadata = contentToSave.range(of: "-->") {
+                        contentToSave.removeSubrange(contentToSave.startIndex...endOfMetadata.upperBound)
+                    }
+                }
+            }
+            
+            try contentToSave.write(to: fileURL, atomically: true, encoding: .utf8)
             print("Successfully saved entry: \(entry.filename)")
             updatePreviewText(for: entry)  // Update preview after saving
         } catch {
@@ -1020,7 +1159,16 @@ struct ContentView: View {
         
         do {
             if fileManager.fileExists(atPath: fileURL.path) {
-                text = try String(contentsOf: fileURL, encoding: .utf8)
+                var content = try String(contentsOf: fileURL, encoding: .utf8)
+                
+                // Remove name metadata before displaying
+                if content.hasPrefix("<!--NAME:") {
+                    if let endOfMetadata = content.range(of: "-->") {
+                        content.removeSubrange(content.startIndex...endOfMetadata.upperBound)
+                    }
+                }
+                
+                text = content
                 print("Successfully loaded entry: \(entry.filename)")
             }
         } catch {
@@ -1029,29 +1177,47 @@ struct ContentView: View {
     }
     
     private func createNewEntry() {
-        let newEntry = HumanEntry.createNew()
+        // Save current entry before creating a new one
+        if let currentId = selectedEntryId,
+           let currentEntry = entries.first(where: { $0.id == currentId }) {
+            saveEntry(entry: currentEntry)
+        }
+
+        // Directly create a new entry without asking for a name
+        let newEntry = HumanEntry.createNew(customName: "") // Always create with empty name
         entries.insert(newEntry, at: 0) // Add to the beginning
         selectedEntryId = newEntry.id
+
+        // Regular new entry starts with newlines
+        text = "\n\n"
+        // Randomize placeholder text for new entry
+        placeholderText = placeholderOptions.randomElement() ?? "\n\nBegin writing"
+        // Save the empty entry immediately
+        saveEntry(entry: newEntry)
         
-        // If this is the first entry (entries was empty before adding this one)
-        if entries.count == 1 {
-            // Read welcome message from default.md
-            if let defaultMessageURL = Bundle.main.url(forResource: "default", withExtension: "md"),
-               let defaultMessage = try? String(contentsOf: defaultMessageURL, encoding: .utf8) {
-                text = "\n\n" + defaultMessage
+        // Do not show the name prompt here
+        // entryName = ""
+        // showingNamePrompt = true
+    }
+    
+    private func finalizeNewEntry(withName name: String = "") {
+        // This function now ONLY handles renaming triggered from the sidebar prompt
+        if editingEntryId != nil {
+            // We're renaming an existing entry
+            if let index = entries.firstIndex(where: { $0.id == editingEntryId }) {
+                entries[index].customName = name.trimmingCharacters(in: .whitespacesAndNewlines) // Trim whitespace from name
+
+                // Save the entry with the new name
+                if let entry = entries.first(where: { $0.id == editingEntryId }) {
+                    saveEntry(entry: entry)
+                }
+
+                editingEntryId = nil // Reset editing state
+                // showingNamePrompt = false // No longer needed
+                entryName = "" // Clear the temporary name field
             }
-            // Save the welcome message immediately
-            saveEntry(entry: newEntry)
-            // Update the preview text
-            updatePreviewText(for: newEntry)
-        } else {
-            // Regular new entry starts with newlines
-            text = "\n\n"
-            // Randomize placeholder text for new entry
-            placeholderText = placeholderOptions.randomElement() ?? "\n\nBegin writing"
-            // Save the empty entry
-            saveEntry(entry: newEntry)
         }
+        // Remove the 'else' block that previously handled *creating* a new entry
     }
     
     private func openChatGPT() {
